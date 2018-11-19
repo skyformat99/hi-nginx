@@ -2,7 +2,7 @@ if test -n "$1";then
     if test "$1" = "--help" || test "$1" = "-h" ;then
         echo \$1:project name.
         echo -e "\tdefault:demo"
-        echo \$2:type:cpp,python,lua ,php or java
+        echo \$2:type:cpp,python,lua ,php , java or javascript
         echo -e "\tdefault:cpp"
         echo \$3:hi\(nginx\) install directory.
         echo -e "\tdefault:/usr/local/nginx"
@@ -39,7 +39,7 @@ cpp_makefile_tpl(){
 cat << END                                                     > $PROJECT/Makefile
 
 PROJECT=$PROJECT.so
-SRC=\$(wildcard *.cpp)
+SRC=\$(shell find . -type f | egrep *.cpp\$\$)
 OBJ=\$(patsubst %.cpp,%.o,\$(SRC))
 
 ifndef NGINX_INSTALL_DIR
@@ -54,14 +54,14 @@ LDFLAGS+=-shared
 all:\$(PROJECT)
 
 \$(PROJECT): \$(OBJ)
-	\$(CXX) \$(CXXFLAGS) \$(LDFLAGS)  \$(LDLIBS) -o \$@ \$^
+	\$(CXX) \$(CXXFLAGS) \$(LDFLAGS) -o \$@ \$^ \$(LDLIBS) 
 
 clean:
 	rm -f  \$(OBJ) \$(PROJECT)
 
 install:
-	test -d \$(NGINX_INSTALL_DIR)/hi || mkdir -p \$(NGINX_INSTALL_DIR)/hi
-	install \$(PROJECT) \$(NGINX_INSTALL_DIR)/hi
+	test -d \$(NGINX_INSTALL_DIR)/$TYPE || mkdir -p \$(NGINX_INSTALL_DIR)/$TYPE
+	install \$(PROJECT) \$(NGINX_INSTALL_DIR)/$TYPE
 
 END
 
@@ -102,7 +102,7 @@ python_makefile_tpl(){
 
 cat << END                                                     > $PROJECT/Makefile
 
-SRC=\$(wildcard *.py)
+SRC=\$(shell find . -type f | egrep *.py\$\$)
 
 ifndef NGINX_INSTALL_DIR
 NGINX_INSTALL_DIR=/usr/local/nginx
@@ -114,15 +114,16 @@ all:
 clean:
 	@echo 'ok'
 
-install:
-	test -d \$(NGINX_INSTALL_DIR)/python || mkdir -p \$(NGINX_INSTALL_DIR)/pyhton
-	install \$(SRC) \$(NGINX_INSTALL_DIR)/python
+install:\${SRC}
+	for i in \${SRC};do test -d \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` || mkdir -p \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` && install \$\$i \$(NGINX_INSTALL_DIR)/$TYPE/\$\$i ;done
+
 
 END
 
 echo "create hi project $PROJECT demo source file."
 
 cat << END                                                     > $PROJECT/$PROJECT.py
+# -*- coding: UTF-8 -*-
 
 hi_res.status(200)
 hi_res.content('hello,python')
@@ -131,11 +132,60 @@ hi_res.content('hello,python')
 END
 }
 
+javascript_makefile_tpl(){
+
+cat << END                                                     > $PROJECT/Makefile
+
+SRC=\$(shell find . -type f | egrep *.js\$\$)
+
+ifndef NGINX_INSTALL_DIR
+NGINX_INSTALL_DIR=/usr/local/nginx
+endif
+
+all:
+	@echo 'ok'
+
+clean:
+	@echo 'ok'
+
+install:\${SRC}
+	for i in \${SRC};do test -d \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` || mkdir -p \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` && install \$\$i \$(NGINX_INSTALL_DIR)/$TYPE/\$\$i ;done
+
+
+END
+
+echo "create hi project $PROJECT demo source file."
+
+cat << END                                                     > $PROJECT/$PROJECT.js
+
+if (typeof (Mustache) == 'undefined') {
+    load('https://cdn.bootcss.com/mustache.js/2.3.0/mustache.min.js')
+}
+
+
+var list = java.util.Arrays.asList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+var template = "{{#list}} * {{.}}\\n  {{/list}}"
+var key = 'test', output
+if (hi_req.cache.containsKey(key)) {
+    output = hi_req.cache.get(key)
+} else {
+    output = Mustache.render(template, {'list': JSON.parse(list.toString())})
+    hi_res.cache.put(key, output)
+}
+hi_res.headers.get('Content-Type').set(0, 'text/plain;charset=UTF-8')
+hi_res.content = output
+hi_res.status = 200;
+
+
+END
+}
+
+
 lua_makefile_tpl(){
 
 cat << END                                                     > $PROJECT/Makefile
 
-SRC=\$(wildcard *.lua)
+SRC=\$(shell find . -type f | egrep *.lua\$\$)
 
 ifndef NGINX_INSTALL_DIR
 NGINX_INSTALL_DIR=/usr/local/nginx
@@ -148,9 +198,9 @@ all:
 clean:
 	@echo 'ok'
 
-install:
-	test -d \$(NGINX_INSTALL_DIR)/lua || mkdir -p \$(NGINX_INSTALL_DIR)/lua
-	install \$(SRC) \$(NGINX_INSTALL_DIR)/lua
+install:\${SRC}
+	for i in \${SRC};do test -d \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` || mkdir -p \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` && install \$\$i \$(NGINX_INSTALL_DIR)/$TYPE/\$\$i ;done
+
 
 END
 
@@ -170,14 +220,14 @@ java_makefile_tpl(){
 
 cat << END                                                     > $PROJECT/Makefile
 
-SRC=\$(shell echo \`find . -type f | egrep *.java\$\$\`)
+SRC=\$(shell find . -type f | egrep *.java\$\$\)
 OBJ=\$(patsubst %.java,%.class,\$(SRC))
 
 ifndef NGINX_INSTALL_DIR
 NGINX_INSTALL_DIR=/usr/local/nginx
 endif
 
-JFLAGS = -classpath .:\${NGINX_INSTALL_DIR}/java/hi-nginx-java.jar
+JFLAGS = -classpath .:\${NGINX_INSTALL_DIR}/$TYPE/hi-nginx-java.jar
 JC = \${JAVA_HOME}/bin/javac
 
 %.class:%.java
@@ -193,7 +243,7 @@ clean:
 	rm -f \${OBJ}
 
 install:\${OBJ}
-	for i in \${OBJ};do test -d \$(NGINX_INSTALL_DIR)/java/`dirname \$\$i` || mkdir -p \$(NGINX_INSTALL_DIR)/java/`dirname \$\$i` && install \$\$i \$(NGINX_INSTALL_DIR)/java/\$\$i ;done
+	for i in \${OBJ};do test -d \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` || mkdir -p \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` && install \$\$i \$(NGINX_INSTALL_DIR)/$TYPE/\$\$i ;done
 
 
 
@@ -229,7 +279,7 @@ php_makefile_tpl(){
 
 cat << END                                                     > $PROJECT/Makefile
 
-SRC=\$(wildcard *.php)
+SRC=\$(shell find . -type f | egrep *.php\$\$)
 
 ifndef NGINX_INSTALL_DIR
 NGINX_INSTALL_DIR=/usr/local/nginx
@@ -242,9 +292,9 @@ all:
 clean:
 	@echo 'ok'
 
-install:
-	test -d \$(NGINX_INSTALL_DIR)/php || mkdir -p \$(NGINX_INSTALL_DIR)/php
-	install \$(SRC) \$(NGINX_INSTALL_DIR)/php
+install:\${SRC}
+	for i in \${SRC};do test -d \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` || mkdir -p \$(NGINX_INSTALL_DIR)/$TYPE/\`dirname \$\$i\` && install \$\$i \$(NGINX_INSTALL_DIR)/$TYPE/\$\$i ;done
+
 
 END
 
@@ -255,12 +305,31 @@ cat << END                                                     > $PROJECT/$PROJE
 <?php
 
 require_once 'hi/servlet.php';
+require_once 'hi/route.php';
 
-class hello implements \hi\servlet {
+class $PROJECT implements \hi\servlet {
 
-    public function handler(\hi\request &\$req, \hi\response &\$res) {
-        \$res->content = 'hello,world';
-        \$res->status = 200;
+    public function handler(\hi\request \$req, \hi\response \$res) {
+        \$app = \hi\route::get_instance();
+        \$app->add('{^/\$}', array('GET'), function (\$rq, \$rs, &\$param) {
+            \$rs->content = 'hello,world';
+            \$rs->status = 200;
+        });
+
+        \$app->add('{^/who/(?P<name>\w+)/?\$}', array('GET'), function (\$rq, \$rs, &\$param) {
+            \$rs->content = 'hello,'.\$param['name'];
+            \$rs->status = 200;
+        });
+
+        \$app->add('{^/phpinfo/?\$}', array('GET'), function(\$rq, \$rs, &\$param) {
+            ob_start();
+            phpinfo();
+            \$rs->content = ob_get_contents();
+            \$rs->status = 200;
+            ob_end_clean();
+        });
+
+        \$app->run(\$req, \$res);
     }
 
 }
@@ -301,7 +370,8 @@ case $TYPE in
     lua) lua_makefile_tpl;;
     java) java_makefile_tpl;;
     php) php_makefile_tpl;;
-    *) echo 'Please set TYPE in (cpp,python,lua,php or java)';;
+    javascript) javascript_makefile_tpl;;
+    *) echo 'Please set TYPE in (cpp,python,lua,php, java or javascript)';;
 esac
 
 if ! test -f Makefile ;
