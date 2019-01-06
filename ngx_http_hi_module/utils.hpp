@@ -17,6 +17,7 @@ extern "C" {
 #include <ctime>
 #include <sstream>
 #include <fstream>
+#include <vector>
 #include <unordered_map>
 
 #include "include/request.hpp"
@@ -113,6 +114,7 @@ namespace hi {
     static void deserialize(const std::string& str, std::unordered_map<std::string, std::string>& m) {
         msgpack::unpack(str.c_str(), str.size()).get().convert(m);
     }
+    
 }
 
 #endif /* UTILS_HPP */

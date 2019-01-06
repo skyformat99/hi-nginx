@@ -10,8 +10,9 @@ extern "C" {
 #include <ngx_http_variables.h>
 }
 
-#define HI_NGINX_SERVER_VERSION "1.7.6"
-#define HI_NGINX_SERVER_NAME "hi-nginx"
+#define HI_NGINX_SERVER_VERSION "1.8.6"
+#define HI_NGINX_SERVER_NAME "hi-nginx/" HI_NGINX_SERVER_VERSION
+#define HI_NGINX_SERVER_HEAD "PoweredBy"
 #define SESSION_ID_NAME "SESSIONID"
 #define form_multipart_type "multipart/form-data"
 #define form_multipart_type_len (sizeof(form_multipart_type) - 1)
@@ -20,10 +21,18 @@ extern "C" {
 #define TEMP_DIRECTORY "temp"
 #define LEVELDB_PATH "leveldb"
 
+#define REQUEST_BODY_NAME "__body__"
+#define SUBREQUEST_BODY_NAME "__subrequest_body__"
+#define SUBREQUEST_STATUS_NAME "__subrequest_status__"
+#define SUBREQUEST_CONTENT_TYPE_NAME "__subrequest_content_type__"
+
+#define HTTP_TIME_SIZE (sizeof ("Mon, 28 Sep 1970 06:00:00 GMT")-1)
+
 //#define HTTP_HI_LUA
 //#define HTTP_HI_JAVA
 //#define HTTP_HI_PYTHON
 //#define HTTP_HI_PHP
+//#define HTTP_HI_DUKTAPE
 
 #ifndef HTTP_HI_CPP
 #define HTTP_HI_CPP
@@ -37,6 +46,7 @@ extern "C" {
 #include <fstream>
 #include <streambuf>
 #include <exception>
+#include <queue>
 
 
 #include "include/request.hpp"
@@ -54,13 +64,21 @@ extern "C" {
 #include "application_t.hpp"
 #include "utils.hpp"
 
-pthread_mutex_t *mtx = 0;
-pthread_mutexattr_t *mtx_attr = 0;
-size_t *cpu_count = 0;
+static pthread_mutex_t *mtx = 0;
+static pthread_mutexattr_t *mtx_attr = 0;
+static size_t *cpu_count = 0;
 static std::vector<std::shared_ptr<hi::module<hi::servlet>>> PLUGIN;
-static std::vector<std::shared_ptr<lru11::Cache<std::string,std::shared_ptr<hi::cache_t>>>> CACHE;
+static std::vector<std::shared_ptr<lru11::Cache<std::string, std::shared_ptr<hi::cache_t>>>> CACHE;
 static leveldb::DB* LEVELDB = 0;
 static leveldb::Options LEVELDB_OPTIONS;
+static std::vector<std::shared_ptr<hi::request>> SUBREQUEST_RESPONSE;
+static ngx_conf_enum_t cache_method_enums[] = {
+    { ngx_string("GET"), NGX_HTTP_GET},
+    { ngx_string("POST"), NGX_HTTP_POST},
+    { ngx_string("PUT"), NGX_HTTP_PUT},
+    { ngx_string("HEAD"), NGX_HTTP_HEAD},
+    { ngx_null_string, 0}
+};
 
 #ifdef HTTP_HI_PYTHON
 #include "lib/py_request.hpp"
@@ -86,9 +104,15 @@ static std::shared_ptr<hi::cache::lru_cache<std::string, hi::java_servlet_t>> JA
 static std::shared_ptr<php::VM> PHP;
 #endif
 
+#ifdef HTTP_HI_DUKTAPE
+#include "lib/duktape.hpp"
+static std::shared_ptr<hi::duktape> DUKTAPE;
+#endif
+
 typedef struct {
     ngx_str_t module_path
     , redis_host
+    , subrequest
 #ifdef HTTP_HI_PYTHON
     , python_script
     , python_content
@@ -111,8 +135,15 @@ typedef struct {
 #ifdef HTTP_HI_PHP
     , php_script
 #endif
+#ifdef HTTP_HI_DUKTAPE
+    , duktape_script
+    , duktape_content
+    , duktape_package_path
+    , duktape_package_cpath
+#endif
     ;
     ngx_int_t module_index
+    , subrequest_index
     , redis_port
     , cache_expires
     , session_expires
@@ -135,8 +166,10 @@ typedef struct {
     , need_cache
     , need_cookies
     , need_session
-    , need_kvdb;
+    , need_kvdb
+    , need_tokens;
     application_t app_type;
+    ngx_uint_t cache_method;
 } ngx_http_hi_loc_conf_t;
 
 

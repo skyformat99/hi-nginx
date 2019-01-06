@@ -12,11 +12,13 @@ if test $HTTP_HI_CPP = YES ; then
 
     CXXFLAGS="$CXXFLAGS -DHTTP_HI_CPP"
     CXXFLAGS="$CXXFLAGS -O3 -std=c++11"
+    CXXFLAGS="$CXXFLAGS -I$ngx_addon_dir -I$ngx_addon_dir/include -I$ngx_addon_dir/include/dukglue"
     CXXFLAGS="$CXXFLAGS -I$ngx_addon_dir/lib"
     CXXFLAGS="$CXXFLAGS -I$ngx_addon_dir/lib/leveldb -DLEVELDB_PLATFORM_POSIX"
     CXXFLAGS="$CXXFLAGS -I$ngx_addon_dir/lib/msgpack"
 
     CFLAGS="$CFLAGS -O3"
+    CFLAGS="$CFLAGS -I$ngx_addon_dir -I$ngx_addon_dir/include -I$ngx_addon_dir/include/dukglue"
     CFLAGS="$CFLAGS -I$ngx_addon_dir/lib"
     CFLAGS="$CFLAGS -I$ngx_addon_dir/lib/msgpack"
 
@@ -52,9 +54,15 @@ if test $HTTP_HI_CPP = YES ; then
         NGX_ADDON_SRCS="$NGX_ADDON_SRCS `find $ngx_addon_dir/lib/php-x -type f -name '*.cc'`"
     fi
 
+    if test $HTTP_HI_DUKTAPE = YES ; then
+        CXXFLAGS="$CXXFLAGS -DHTTP_HI_DUKTAPE"
+        NGX_ADDON_SRCS="$NGX_ADDON_SRCS `find $ngx_addon_dir/lib/dukglue -type f -name '*.c'`"
+    fi
+
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS `find $ngx_addon_dir/lib/MPFDParser -type f -name '*.cpp'`"
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS `find $ngx_addon_dir/lib/leveldb -type f -name '*.cc'`"
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS `find $ngx_addon_dir/lib/msgpack -type f -name '*.c'`"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/lib/file_mmap.cpp"
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_hi_module.cpp"
 fi
 

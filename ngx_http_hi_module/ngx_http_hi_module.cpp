@@ -1,19 +1,47 @@
 #include "module_config.hpp"
+
+#ifdef HTTP_HI_PYTHON
+#include "python_handler.hpp"
+#endif
+
+#ifdef HTTP_HI_LUA
+#include "lua_handler.hpp"
+#endif
+
+#ifdef HTTP_HI_DUKTAPE
+#include "duktape_handler.hpp"
+#endif
+
+#ifdef HTTP_HI_JAVA
+#include "java_handler.hpp"
+#endif
+
+#ifdef HTTP_HI_PHP
+#include "php_handler.hpp"
+#endif
+
+
 #include "cpp_handler.hpp"
 
+static ngx_int_t ngx_http_hi_init(ngx_conf_t *cf);
 static char *ngx_http_hi_conf_init(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static void * ngx_http_hi_create_loc_conf(ngx_conf_t *cf);
 static char * ngx_http_hi_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child);
-static void ngx_http_hi_exit_process(ngx_cycle_t* cycle);
-static void ngx_http_hi_exit_master(ngx_cycle_t* cycle);
+static ngx_int_t ngx_http_hi_process_init(ngx_cycle_t *cycle);
+static void ngx_http_hi_process_exit(ngx_cycle_t* cycle);
+static void ngx_http_hi_master_exit(ngx_cycle_t* cycle);
 static ngx_int_t ngx_http_hi_normal_handler(ngx_http_request_t *r);
 static void ngx_http_hi_body_handler(ngx_http_request_t* r);
 static ngx_int_t ngx_http_hi_handler(ngx_http_request_t *r);
 
+static ngx_int_t ngx_http_hi_subrequest_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_hi_subrequest_post_handler(ngx_http_request_t *r, void *data, ngx_int_t rc);
+static void ngx_http_hi_subrequest_callback_handler(ngx_http_request_t *r);
+
 
 ngx_http_module_t ngx_http_hi_module_ctx = {
     NULL, /* preconfiguration */
-    NULL, /* postconfiguration */
+    ngx_http_hi_init, /* postconfiguration */
     NULL, /* create main configuration */
     NULL, /* init main configuration */
 
@@ -32,6 +60,22 @@ ngx_command_t ngx_http_hi_commands[] = {
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_hi_loc_conf_t, module_path),
         NULL
+    },
+    {
+        ngx_string("hi_subrequest"),
+        NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, subrequest),
+        NULL
+    },
+    {
+        ngx_string("hi_cache_method"),
+        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_SIF_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_CONF_TAKE1,
+        ngx_conf_set_enum_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, cache_method),
+        cache_method_enums
     },
     {
         ngx_string("hi_cache_size"),
@@ -95,6 +139,14 @@ ngx_command_t ngx_http_hi_commands[] = {
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_hi_loc_conf_t, need_cookies),
+        NULL
+    },
+    {
+        ngx_string("hi_need_tokens"),
+        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_SIF_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_CONF_TAKE1,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, need_tokens),
         NULL
     },
     {
@@ -178,6 +230,40 @@ ngx_command_t ngx_http_hi_commands[] = {
         ngx_conf_set_str_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_hi_loc_conf_t, lua_package_cpath),
+        NULL
+    },
+#endif
+#ifdef HTTP_HI_DUKTAPE
+    {
+        ngx_string("hi_duktape_script"),
+        NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_CONF_TAKE1,
+        ngx_http_hi_conf_init,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, duktape_script),
+        NULL
+    },
+    {
+        ngx_string("hi_duktape_content"),
+        NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_CONF_TAKE1,
+        ngx_http_hi_conf_init,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, duktape_content),
+        NULL
+    },
+    {
+        ngx_string("hi_duktape_package_path"),
+        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_SIF_CONF | NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, duktape_package_path),
+        NULL
+    },
+    {
+        ngx_string("hi_duktape_package_cpath"),
+        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_SIF_CONF | NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_hi_loc_conf_t, duktape_package_cpath),
         NULL
     },
 #endif
@@ -291,15 +377,15 @@ ngx_module_t ngx_http_hi_module = {
     NGX_HTTP_MODULE, /* module type */
     NULL, /* init master */
     NULL, /* init module */
-    NULL, /* init process */
+    ngx_http_hi_process_init, /* init process */
     NULL, /* init thread */
     NULL, /* exit thread */
-    ngx_http_hi_exit_process, /* exit process */
-    ngx_http_hi_exit_master, /* exit master */
+    ngx_http_hi_process_exit, /* exit process */
+    ngx_http_hi_master_exit, /* exit master */
     NGX_MODULE_V1_PADDING
 };
 
-static char *ngx_http_hi_conf_init(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+static ngx_int_t ngx_http_hi_init(ngx_conf_t *cf) {
     if (mtx == 0) {
         mtx = (pthread_mutex_t*) mmap(0, sizeof (pthread_mutex_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         if (mtx != MAP_FAILED) {
@@ -323,6 +409,9 @@ static char *ngx_http_hi_conf_init(ngx_conf_t *cf, ngx_command_t *cmd, void *con
             }
         }
     }
+}
+
+static char *ngx_http_hi_conf_init(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     ngx_http_core_loc_conf_t *clcf;
     clcf = (ngx_http_core_loc_conf_t *) ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_hi_handler;
@@ -341,9 +430,16 @@ static void * ngx_http_hi_create_loc_conf(ngx_conf_t *cf) {
         conf->redis_host.data = NULL;
         conf->redis_port = NGX_CONF_UNSET;
 
+        conf->subrequest.len = 0;
+        conf->subrequest.data = NULL;
+        conf->subrequest_index = NGX_CONF_UNSET;
+
+
+
         conf->cache_index = NGX_CONF_UNSET;
         conf->cache_size = NGX_CONF_UNSET_UINT;
         conf->cache_expires = NGX_CONF_UNSET;
+        conf->cache_method = NGX_CONF_UNSET_UINT;
 
 
         conf->session_expires = NGX_CONF_UNSET;
@@ -356,6 +452,7 @@ static void * ngx_http_hi_create_loc_conf(ngx_conf_t *cf) {
         conf->need_cookies = NGX_CONF_UNSET;
         conf->need_session = NGX_CONF_UNSET;
         conf->need_kvdb = NGX_CONF_UNSET;
+        conf->need_tokens = NGX_CONF_UNSET;
 
         conf->app_type = application_t::__unkown__;
 #ifdef HTTP_HI_PYTHON
@@ -373,6 +470,16 @@ static void * ngx_http_hi_create_loc_conf(ngx_conf_t *cf) {
         conf->lua_package_path.data = NULL;
         conf->lua_package_cpath.len = 0;
         conf->lua_package_cpath.data = NULL;
+#endif
+#ifdef HTTP_HI_DUKTAPE
+        conf->duktape_script.len = 0;
+        conf->duktape_script.data = NULL;
+        conf->duktape_content.len = 0;
+        conf->duktape_content.data = NULL;
+        conf->duktape_package_path.len = 0;
+        conf->duktape_package_path.data = NULL;
+        conf->duktape_package_cpath.len = 0;
+        conf->duktape_package_cpath.data = NULL;
 #endif
 #ifdef HTTP_HI_PHP
         conf->php_script.len = 0;
@@ -408,6 +515,7 @@ static char * ngx_http_hi_merge_loc_conf(ngx_conf_t* cf, void* parent, void* chi
 
     ngx_conf_merge_str_value(conf->module_path, prev->module_path, "");
     ngx_conf_merge_str_value(conf->redis_host, prev->redis_host, "");
+    ngx_conf_merge_str_value(conf->subrequest, prev->subrequest, "");
     ngx_conf_merge_value(conf->redis_port, prev->redis_port, (ngx_int_t) 0);
 
 #ifdef HTTP_HI_PYTHON
@@ -419,6 +527,12 @@ static char * ngx_http_hi_merge_loc_conf(ngx_conf_t* cf, void* parent, void* chi
     ngx_conf_merge_str_value(conf->lua_content, prev->lua_content, "");
     ngx_conf_merge_str_value(conf->lua_package_path, prev->lua_package_path, "");
     ngx_conf_merge_str_value(conf->lua_package_cpath, prev->lua_package_cpath, "");
+#endif
+#ifdef HTTP_HI_DUKTAPE
+    ngx_conf_merge_str_value(conf->duktape_script, prev->duktape_script, "");
+    ngx_conf_merge_str_value(conf->duktape_content, prev->duktape_content, "");
+    ngx_conf_merge_str_value(conf->duktape_package_path, prev->duktape_package_path, "");
+    ngx_conf_merge_str_value(conf->duktape_package_cpath, prev->duktape_package_cpath, "");
 #endif
 #ifdef HTTP_HI_PHP
     ngx_conf_merge_str_value(conf->php_script, prev->php_script, "");
@@ -444,14 +558,36 @@ static char * ngx_http_hi_merge_loc_conf(ngx_conf_t* cf, void* parent, void* chi
 
     ngx_conf_merge_uint_value(conf->cache_size, prev->cache_size, (size_t) 10);
     ngx_conf_merge_sec_value(conf->cache_expires, prev->cache_expires, (ngx_int_t) 300);
+    ngx_conf_merge_uint_value(conf->cache_method, prev->cache_method, (ngx_uint_t) NGX_HTTP_GET);
+
     ngx_conf_merge_uint_value(conf->kvdb_size, prev->kvdb_size, (size_t) 10);
     ngx_conf_merge_sec_value(conf->kvdb_expires, prev->kvdb_expires, (ngx_int_t) 300);
+
     ngx_conf_merge_sec_value(conf->session_expires, prev->session_expires, (ngx_int_t) 300);
+
     ngx_conf_merge_value(conf->need_headers, prev->need_headers, (ngx_flag_t) 0);
+
     ngx_conf_merge_value(conf->need_cache, prev->need_cache, (ngx_flag_t) 0);
-    ngx_conf_merge_value(conf->need_kvdb, prev->need_kvdb, (ngx_flag_t) 1);
+
+    ngx_conf_merge_value(conf->need_kvdb, prev->need_kvdb, (ngx_flag_t) 0);
+
     ngx_conf_merge_value(conf->need_cookies, prev->need_cookies, (ngx_flag_t) 0);
+
     ngx_conf_merge_value(conf->need_session, prev->need_session, (ngx_flag_t) 0);
+
+    ngx_conf_merge_value(conf->need_tokens, prev->need_tokens, (ngx_flag_t) 0);
+
+
+
+    if (conf->subrequest.len > 0 && conf->subrequest_index == NGX_CONF_UNSET) {
+
+        std::shared_ptr<hi::request> req(new hi::request);
+        SUBREQUEST_RESPONSE.push_back(std::move(req));
+
+        conf->subrequest_index = SUBREQUEST_RESPONSE.size() - 1;
+    }
+
+
 
     if (conf->need_cache == 1 && conf->cache_index == NGX_CONF_UNSET) {
         CACHE.push_back(std::move(std::make_shared<lru11::Cache<std::string, std::shared_ptr < hi::cache_t>>>(conf->cache_size)));
@@ -474,6 +610,11 @@ static char * ngx_http_hi_merge_loc_conf(ngx_conf_t* cf, void* parent, void* chi
 #ifdef HTTP_HI_LUA
     if (conf->lua_content.len > 0 || conf->lua_script.len > 0) {
         conf->app_type = application_t::__lua__;
+    }
+#endif
+#ifdef HTTP_HI_DUKTAPE
+    if (conf->duktape_content.len > 0 || conf->duktape_script.len > 0) {
+        conf->app_type = application_t::__duktape__;
     }
 #endif
 #ifdef HTTP_HI_PHP
@@ -499,7 +640,22 @@ static char * ngx_http_hi_merge_loc_conf(ngx_conf_t* cf, void* parent, void* chi
     return NGX_CONF_OK;
 }
 
-static void ngx_http_hi_exit_process(ngx_cycle_t * cycle) {
+static ngx_int_t ngx_http_hi_process_init(ngx_cycle_t *cycle) {
+    if (!LEVELDB) {
+        LEVELDB_OPTIONS.create_if_missing = true;
+        std::string i;
+        pthread_mutex_lock(mtx);
+        if (*cpu_count > std::thread::hardware_concurrency() - 1) {
+            *cpu_count = 0;
+        }
+        i = std::move(std::to_string(*cpu_count));
+        *cpu_count = (*cpu_count) + 1;
+        pthread_mutex_unlock(mtx);
+        leveldb::DB::Open(LEVELDB_OPTIONS, LEVELDB_PATH + ("/" + i), &LEVELDB);
+    }
+}
+
+static void ngx_http_hi_process_exit(ngx_cycle_t * cycle) {
     if (mtx)pthread_mutex_destroy(mtx);
     if (mtx_attr)pthread_mutexattr_destroy(mtx_attr);
     if (mtx_attr)munmap(mtx_attr, sizeof (pthread_mutexattr_t));
@@ -507,6 +663,7 @@ static void ngx_http_hi_exit_process(ngx_cycle_t * cycle) {
     if (cpu_count)munmap(cpu_count, sizeof (size_t));
     PLUGIN.clear();
     CACHE.clear();
+    SUBREQUEST_RESPONSE.clear();
     if (LEVELDB) {
         delete LEVELDB;
     }
@@ -515,6 +672,9 @@ static void ngx_http_hi_exit_process(ngx_cycle_t * cycle) {
 #endif
 #ifdef HTTP_HI_LUA
     LUA.reset();
+#endif
+#ifdef HTTP_HI_DUKTAPE
+    DUKTAPE.reset();
 #endif
 #ifdef HTTP_HI_JAVA
     JAVA.reset();
@@ -526,7 +686,7 @@ static void ngx_http_hi_exit_process(ngx_cycle_t * cycle) {
 #endif
 }
 
-static void ngx_http_hi_exit_master(ngx_cycle_t * cycle) {
+static void ngx_http_hi_master_exit(ngx_cycle_t * cycle) {
 
 }
 
@@ -543,20 +703,29 @@ static ngx_int_t ngx_http_hi_normal_handler(ngx_http_request_t *r) {
 
     hi::request ngx_request;
     hi::response ngx_response;
+
+    std::shared_ptr<std::string> cache_k = std::make_shared<std::string>();
+    if (conf->subrequest.len > 0) {
+        ngx_request = *SUBREQUEST_RESPONSE[conf->subrequest_index];
+
+    } else {
+        ngx_request.uri.assign((char*) r->uri.data, r->uri.len);
+    }
+
+    cache_k->assign(ngx_request.uri);
+    if (r->args.len > 0) {
+        ngx_request.param.assign((char*) r->args.data, r->args.len);
+        cache_k->append("?").append(ngx_request.param);
+    }
+
+    cache_k->assign(std::move(hi::md5(*cache_k)));
+
+
     std::string SESSION_ID_VALUE;
     std::unordered_map<std::string, std::string>::const_iterator iterator;
 
 
-    ngx_request.uri.assign((char*) r->uri.data, r->uri.len);
-    if (r->args.len > 0) {
-        ngx_request.param.assign((char*) r->args.data, r->args.len);
-    }
-    std::shared_ptr<std::string> cache_k = std::make_shared<std::string>(ngx_request.uri);
-    if (r->args.len > 0) {
-        cache_k->append("?").append(ngx_request.param);
-    }
-    cache_k->assign(std::move(hi::md5(*cache_k)));
-    if (r->method == NGX_HTTP_GET && conf->need_cache == 1) {
+    if (r->method == conf->cache_method && conf->need_cache == 1) {
         auto lru_cache = CACHE[conf->cache_index];
         if (lru_cache->contains(*cache_k)) {
             auto cache_ele = lru_cache->get(*cache_k);
@@ -566,7 +735,7 @@ static ngx_int_t ngx_http_hi_normal_handler(ngx_http_request_t *r) {
                 ngx_response.content = cache_ele->content;
                 ngx_response.headers.find("Content-Type")->second = cache_ele->content_type;
                 ngx_response.status = cache_ele->status;
-                u_char tmp_t[sizeof ("Mon, 28 Sep 1970 06:00:00 GMT") - 1];
+                u_char tmp_t[HTTP_TIME_SIZE];
                 u_char* p = ngx_http_time(tmp_t, time(0));
                 ngx_response.headers.insert(std::move(std::make_pair("Last-Modified", std::string((char*) tmp_t, p - tmp_t))));
                 goto done;
@@ -602,7 +771,7 @@ static ngx_int_t ngx_http_hi_normal_handler(ngx_http_request_t *r) {
                 form_urlencoded_type_len) == 0) {
             hi::parser_param(std::string((char*) body.data, body.len), ngx_request.form);
         } else {
-            ngx_request.form["__body__"] = std::move(std::string((char*) body.data, body.len));
+            ngx_request.form[REQUEST_BODY_NAME] = std::move(std::string((char*) body.data, body.len));
         }
     }
     if (conf->need_cookies == 1 && r->headers_in.cookies.elts != NULL && r->headers_in.cookies.nelts != 0) {
@@ -639,35 +808,43 @@ static ngx_int_t ngx_http_hi_normal_handler(ngx_http_request_t *r) {
     }
 
     switch (conf->app_type) {
-        case application_t::__cpp__:hi::ngx_http_hi_cpp_handler(conf, ngx_request, ngx_response);
+        case application_t::__cpp__:hi::ngx_http_hi_cpp_handler(r, conf, ngx_request, ngx_response);
             break;
 #ifdef HTTP_HI_PYTHON
-        case application_t::__python__:hi::ngx_http_hi_python_handler(conf, ngx_request, ngx_response);
+        case application_t::__python__:hi::ngx_http_hi_python_handler(r, conf, ngx_request, ngx_response);
             break;
 #endif
 #ifdef HTTP_HI_LUA
-        case application_t::__lua__:hi::ngx_http_hi_lua_handler(conf, ngx_request, ngx_response);
+        case application_t::__lua__:hi::ngx_http_hi_lua_handler(r, conf, ngx_request, ngx_response);
+            break;
+#endif
+#ifdef HTTP_HI_DUKTAPE
+        case application_t::__duktape__:hi::ngx_http_hi_duktape_handler(r, conf, ngx_request, ngx_response);
             break;
 #endif
 #ifdef HTTP_HI_JAVA
-        case application_t::__java__:hi::ngx_http_hi_java_handler(conf, ngx_request, ngx_response);
+        case application_t::__java__:hi::ngx_http_hi_java_handler(r, conf, ngx_request, ngx_response);
             break;
-        case application_t::__javascript__:hi::ngx_http_hi_javascript_handler(conf, ngx_request, ngx_response);
+        case application_t::__javascript__:hi::ngx_http_hi_javascript_handler(r, conf, ngx_request, ngx_response);
             break;
 #endif
 #ifdef HTTP_HI_PHP
-        case application_t::__php__:hi::ngx_http_hi_php_handler(conf, ngx_request, ngx_response);
+        case application_t::__php__:hi::ngx_http_hi_php_handler(r, conf, ngx_request, ngx_response);
             break;
 #endif
         default:break;
     }
 
-    if (r->method == NGX_HTTP_GET && conf->need_cache == 1 && ngx_response.status == 200 && conf->cache_expires > 0) {
+    if (conf->subrequest.len > 0) {
+        SUBREQUEST_RESPONSE[conf->subrequest_index].reset();
+    }
+
+    if (r->method == conf->cache_method && conf->need_cache == 1 && ngx_response.status == 200 && conf->cache_expires > 0) {
         std::shared_ptr<hi::cache_t> cache_v = std::make_shared<hi::cache_t>();
         cache_v->content = ngx_response.content;
         cache_v->content_type = ngx_response.headers.find("Content-Type")->second;
         CACHE[conf->cache_index]->insert(*cache_k, cache_v);
-        u_char tmp_t[sizeof ("Mon, 28 Sep 1970 06:00:00 GMT") - 1];
+        u_char tmp_t[HTTP_TIME_SIZE];
         u_char* p = ngx_http_time(tmp_t, time(0));
         ngx_response.headers.insert(std::move(std::make_pair("Last-Modified", std::string((char*) tmp_t, p - tmp_t))));
     }
@@ -724,7 +901,7 @@ done:
     out.buf = buf;
     out.next = NULL;
 
-    ngx_response.headers.insert(std::make_pair(HI_NGINX_SERVER_NAME, HI_NGINX_SERVER_VERSION));
+    ngx_response.headers.insert(std::move(std::make_pair(HI_NGINX_SERVER_HEAD, (conf->need_tokens ? HI_NGINX_SERVER_NAME : "hi-nginx"))));
     hi::set_output_headers(r, ngx_response.headers);
     r->headers_out.status = ngx_response.status;
     r->headers_out.content_length_n = response.len;
@@ -739,24 +916,16 @@ done:
 }
 
 static void ngx_http_hi_body_handler(ngx_http_request_t* r) {
-    ngx_http_finalize_request(r, ngx_http_hi_normal_handler(r));
+    ngx_http_hi_loc_conf_t * conf = (ngx_http_hi_loc_conf_t *) ngx_http_get_module_loc_conf(r, ngx_http_hi_module);
+    if (conf->subrequest.len > 0) {
+        ngx_http_hi_subrequest_handler(r);
+    } else {
+        ngx_http_finalize_request(r, ngx_http_hi_normal_handler(r));
+    }
 }
 
 static ngx_int_t ngx_http_hi_handler(ngx_http_request_t *r) {
     ngx_http_hi_loc_conf_t * conf = (ngx_http_hi_loc_conf_t *) ngx_http_get_module_loc_conf(r, ngx_http_hi_module);
-    if (!LEVELDB) {
-        LEVELDB_OPTIONS.create_if_missing = true;
-        std::string i;
-        pthread_mutex_lock(mtx);
-        if (*cpu_count > std::thread::hardware_concurrency() - 1) {
-            *cpu_count = 0;
-        }
-        i = std::move(std::to_string(*cpu_count));
-        *cpu_count = (*cpu_count) + 1;
-        pthread_mutex_unlock(mtx);
-        leveldb::DB::Open(LEVELDB_OPTIONS, LEVELDB_PATH + ("/" + i), &LEVELDB);
-    }
-
 
     if (r->headers_in.content_length_n > 0) {
         ngx_http_core_loc_conf_t *clcf = (ngx_http_core_loc_conf_t *) ngx_http_get_module_loc_conf(r, ngx_http_core_module);
@@ -772,6 +941,61 @@ static ngx_int_t ngx_http_hi_handler(ngx_http_request_t *r) {
         return NGX_DONE;
     } else {
         ngx_http_discard_request_body(r);
-        return ngx_http_hi_normal_handler(r);
+        if (conf->subrequest.len > 0) {
+            return ngx_http_hi_subrequest_handler(r);
+        } else {
+            return ngx_http_hi_normal_handler(r);
+        }
     }
+}
+
+static ngx_int_t ngx_http_hi_subrequest_handler(ngx_http_request_t *r) {
+    ngx_http_hi_loc_conf_t * conf = (ngx_http_hi_loc_conf_t *) ngx_http_get_module_loc_conf(r, ngx_http_hi_module);
+    ngx_http_post_subrequest_t *psr = (ngx_http_post_subrequest_t *) ngx_palloc(r->pool, sizeof (ngx_http_post_subrequest_t));
+    if (psr == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    psr->handler = ngx_http_hi_subrequest_post_handler;
+    psr->data = conf;
+
+    ngx_http_request_t *sr;
+    ngx_int_t rc = ngx_http_subrequest(r, &conf->subrequest, &r->args, &sr, psr, NGX_HTTP_SUBREQUEST_IN_MEMORY);
+
+    if (rc != NGX_OK) {
+        return NGX_ERROR;
+    }
+    sr->method = r->method;
+    sr->method_name = r->method_name;
+    return NGX_DONE;
+}
+
+static ngx_int_t ngx_http_hi_subrequest_post_handler(ngx_http_request_t *r, void *data, ngx_int_t rc) {
+    ngx_http_request_t *pr = r->parent;
+    ngx_http_hi_loc_conf_t * conf = (ngx_http_hi_loc_conf_t *) ngx_http_get_module_loc_conf(pr, ngx_http_hi_module);
+    pr->headers_out.status = r->headers_out.status;
+    auto& req = SUBREQUEST_RESPONSE[conf->subrequest_index];
+    if (!req) {
+        SUBREQUEST_RESPONSE[conf->subrequest_index] = std::move(std::make_shared<hi::request>());
+    }
+    req->form[SUBREQUEST_CONTENT_TYPE_NAME] = std::move(std::string((char*) r->headers_out.content_type.data, r->headers_out.content_type.len));
+    req->form[SUBREQUEST_STATUS_NAME] = std::move(std::to_string(r->headers_out.status));
+    ngx_buf_t *upstream_buffer = &r->upstream->buffer;
+    std::string& subrequest_body = req->form[SUBREQUEST_BODY_NAME];
+    for (; upstream_buffer->pos != upstream_buffer->last; upstream_buffer->pos++) {
+        subrequest_body += *upstream_buffer->pos;
+    }
+    req->uri.assign((char*) r->uri.data, r->uri.len);
+
+    pr->write_event_handler = ngx_http_hi_subrequest_callback_handler;
+    return NGX_OK;
+}
+
+static void ngx_http_hi_subrequest_callback_handler(ngx_http_request_t *r) {
+    ngx_http_hi_loc_conf_t * conf = (ngx_http_hi_loc_conf_t *) ngx_http_get_module_loc_conf(r, ngx_http_hi_module);
+    if (r->headers_out.status != NGX_HTTP_OK) {
+        ngx_http_finalize_request(r, r->headers_out.status);
+        return;
+    }
+    ngx_int_t ret = ngx_http_hi_normal_handler(r);
+    ngx_http_finalize_request(r, ret);
 }

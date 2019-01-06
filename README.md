@@ -5,6 +5,7 @@ A distribution of Nginx with
 - python 
 - lua 
 - java,javascript and jsr-223 JVM language
+- duktape:javascript
 - php
 
 web development. 
@@ -112,6 +113,7 @@ include_path = ".:/usr/local/nginx/php"
                 --enable-http-hi-cpp=YES                            \
                 --enable-http-hi-python=NO                         \
                 --enable-http-hi-lua=NO                            \
+                --enable-http-hi-duktape=NO                            \
                 --enable-http-hi-java=NO                           \
                 --enable-http-hi-php=NO                            \
                 --with-http-hi-python-version=python3               \
@@ -121,7 +123,7 @@ include_path = ".:/usr/local/nginx/php"
 ```
 
 
-# python and lua api
+# python, lua and duktape api
 ## hi_req
 - uri
 - method
@@ -266,6 +268,37 @@ hi_res.status = 200;
 
 ```
 
+## duktape
+
+```javascript
+/*
+var loaded = hi_module.require('libadder','adder')
+hi_res.header('Content-Type','text/plain;charset=UTF-8')
+hi_res.content(loaded?adder(1,2).toString():'failed load c module.')
+hi_res.status(200)
+*/
+
+/*
+var echo = require('echo')
+var t = new echo()
+var route = require('route').get_instance()
+route.get('^\/(.*)$', function (req, res, param) {
+    res.header('Content-Type', 'text/plain;charset=UTF8')
+    res.content(req.method()+'\n'+req.uri() + '\n' + t.concat(param.toString()))
+    res.status(200)
+})
+
+route.run(hi_req, hi_res)
+*/
+
+///*
+hi_res.header('Content-Type','text/plain;charset=UTF-8')
+hi_res.content('hello,world')
+hi_res.status(200)
+//*/
+
+```
+
 
 # 3rd party module
 
@@ -284,6 +317,28 @@ hi_res.status = 200;
             location = /hello {
                 hi cpp/hello.so ;
             }
+
+```
+
+- directives : content: http,srv,loc,if in loc ,if in srv
+    - hi_need_tokens,default: on
+
+    example:
+
+```nginx
+
+        hi_need_tokens on|off;
+
+```
+
+- directives : content: http,srv,loc,if in loc ,if in srv
+    - hi_cache_method,default: GET
+
+    example:
+
+```nginx
+
+        hi_cache_method GET|POST|PUT|HEAD;
 
 ```
 
@@ -524,6 +579,73 @@ or
 
 ```
 
+
+- directives : content:  http,srv,if in srv
+    - hi_duktape_package_path,default: ""
+
+    example:
+    
+```nginx
+
+
+            hi_duktape_package_path '/usr/local/nginx/duktape/package';
+
+
+```
+
+- directives : content:  http,srv,if in srv
+    - hi_duktape_package_cpath,default: ""
+
+    example:
+    
+```nginx
+
+
+            hi_duktape_package_cpath '/usr/local/nginx/duktape/package';
+
+
+```
+
+
+
+- directives : content: loc,if in loc
+    - hi_duktape_content,default: ""
+
+    example:
+    
+```nginx
+
+            location = /jsecho {
+                hi_duktape_content "hi_res.status(200);hi_res.content('hello,world')" ;
+            }
+
+```
+
+- directives : content: loc,if in loc
+    - hi_duktape_script,default: ""
+
+    example:
+    
+```nginx
+
+            location ~ \.js$  {
+                hi_duktape_script duktape;
+            }
+
+```
+
+or
+
+```nginx
+
+            location / {
+                hi_duktape_script duktape/index.js;
+            }
+
+```
+
+
+
 - directives : content: http,srv,if in srv
     - hi_java_classpath,default:"-Djava.class.path=."
 
@@ -688,6 +810,27 @@ or
                 hi_php_script php/index.php;
             }
 ```
+
+- directives : content: loc if in loc
+    - hi_subrequest , default : ""
+    example:
+
+```nginx
+
+        location ^~ /sub {
+                hi_subrequest '/query';
+                hi_lua_content 'hi_res:header("Content-Type",hi_req:get_form("__subrequest_content_type__"))\nhi_res:status(tonumber(hi_req:get_form("__subrequest_status__")))\nhi_res:content(hi_req:get_form("__subrequest_body__"))';
+        }
+
+        location ^~ /query {
+                internal;
+                proxy_pass http://http://hq.sinajs.cn/;
+                proxy_set_header Accept-Encoding '';
+        }
+#  curl -i http://localhost/sub?list=sh601006
+
+```
+
 
 ## nginx.conf
 

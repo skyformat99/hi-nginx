@@ -3,22 +3,6 @@
 
 #include "module_config.hpp"
 
-#ifdef HTTP_HI_PYTHON
-#include "python_handler.hpp"
-#endif
-
-#ifdef HTTP_HI_LUA
-#include "lua_handler.hpp"
-#endif
-
-#ifdef HTTP_HI_JAVA
-#include "java_handler.hpp"
-#endif
-
-#ifdef HTTP_HI_PHP
-#include "php_handler.hpp"
-#endif
-
 namespace hi {
 
     static void get_input_headers(ngx_http_request_t* r, std::unordered_map<std::string, std::string>& input_headers) {
@@ -105,7 +89,7 @@ namespace hi {
         return body;
     }
 
-    static void ngx_http_hi_cpp_handler(ngx_http_hi_loc_conf_t * conf, hi::request& req, hi::response& res) {
+    static void ngx_http_hi_cpp_handler(ngx_http_request_t *r,ngx_http_hi_loc_conf_t * conf, hi::request& req, hi::response& res) {
         std::shared_ptr<hi::servlet> view_instance = std::move(PLUGIN[conf->module_index]->make_obj());
         if (view_instance) {
 
